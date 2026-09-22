@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>动态规则多锁安全滑动验证码</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f7f9fa;
+            font-family: sans-serif;
+        }
+
+        .captcha-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .trigger-btn {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .captcha-box {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            margin-bottom: 8px;
+            width: 320px;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 999;
+            display: none;
+        }
+
+        .img-container {
+            position: relative;
+            width: 320px;
+            height: 160px;
+            overflow: hidden;
+            border-radius: 4px;
+            background: #eee;
+        }
+
+        .bg-piece {
+            position: absolute;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .block-item {
+            position: absolute;
+            z-index: 2;
+            width: 48px;
+            height: 48px;
+            cursor: pointer;
+            border: 2px dashed transparent;
+            box-sizing: border-box;
+            will-change: transform;
+            transform: translateZ(0);
+        }
+
+        .block-item.active {
+            border-color: #007bff;
+            z-index: 10;
+            background: rgba(0, 123, 255, 0.1);
+        }
+
+        .block-img {
+            width: 100%;
+            height: 100%;
+            user-select: none;
+            pointer-events: none;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-sizing: border-box;
+        }
+
+        .refresh-btn {
+            float: right;
+            margin-top: 5px;
+            cursor: pointer;
+            color: #007bff;
+            font-size: 13px;
+            user-select: none;
+        }
+
+        .slider-bar {
+            position: relative;
+            width: 100%;
+            height: 40px;
+            background: #f1f3f5;
+            margin-top: 15px;
+            border-radius: 20px;
+            line-height: 40px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 14px;
+            user-select: none;
+            overflow: hidden;
+        }
+
+        .slider-btn {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 40px;
+            height: 40px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            color: #333;
+            will-change: left;
+        }
+
+        .slider-bar.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .slider-bar.fail {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .close-btn {
+            position: absolute;
+            right: 10px;
+            top: 5px;
+            cursor: pointer;
+            font-size: 18px;
+            color: #999;
+        }
+
+        .tip-text {
+            font-size: 12px;
+            color: #e0a800;
+            margin-top: 5px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="captcha-wrapper" id="captchaWrapper">
+        <div class="captcha-box" id="captchaBox">
+            <span class="close-btn" id="closeBtn">&times;</span>
+            <div class="img-container" id="imgContainer">
+                <div class="block-item" id="blockItem1"><img id="blockImg1" class="block-img" alt="滑块1"></div>
+                <div class="block-item" id="blockItem2"><img id="blockImg2" class="block-img" alt="滑块2"></div>
+                <div class="block-item" id="blockItem3"><img id="blockImg3" class="block-img" alt="滑块3"></div>
+            </div>
+            <div class="tip-text">请点击上方选择正确的滑块，然后拖动下方圆钮完成拼图</div>
+            <div class="refresh-btn" id="refreshBtn">🔄 刷新验证码</div>
+            <div class="slider-bar" id="sliderBar">
+                <span id="sliderText">请拖动滑块完成验证</span>
+                <div class="slider-btn" id="sliderBtn">&gt;</div>
+            </div>
+        </div>
+        <button class="trigger-btn" id="triggerBtn">点击进行安全验证</button>
+    </div>
+
+    <script>
+        const triggerBtn = document.getElementById('triggerBtn');
+        const captchaBox = document.getElementById('captchaBox');
+        const captchaWrapper = document.getElementById('captchaWrapper');
+        const closeBtn = document.getElementById('closeBtn');
+        const imgContainer = document.getElementById('imgContainer');
+
+        const blockItem1 = document.getElementById('blockItem1');
+        const blockItem2 = document.getElementById('blockItem2');
+        const blockItem3 = document.getElementById('blockItem3');
+        const blockImg1 = document.getElementById('blockImg1');
+        const blockImg2 = document.getElementById('blockImg2');
+        const blockImg3 = document.getElementById('blockImg3');
+
+        const sliderBtn = document.getElementById('sliderBtn');
+        const sliderBar = document.getElementById('sliderBar');
+        const sliderText = document.getElementById('sliderText');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        let isMouseDown = false;
+        let startX = 0, startY = 0, startTime = 0;
+        let track = [];
+        let captchaToken = '';
+        let blocksData = [];
+        let activeBlockIndex = 0;
+        let isVerified = false;
+        let animationFrameId = null;
+
+        triggerBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = captchaBox.style.display === 'block';
+            captchaBox.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) {
+                initCaptcha();
+            }
+        });
+
+        closeBtn.addEventListener('click', () => { captchaBox.style.display = 'none'; });
+        document.addEventListener('click', (e) => {
+            if (!captchaWrapper.contains(e.target)) {
+                captchaBox.style.display = 'none';
+            }
+        });
+
+        function setActiveBlock(idx) {
+            if (isVerified) return;
+            activeBlockIndex = idx;
+            [blockItem1, blockItem2, blockItem3].forEach((item, i) => {
+                if (i === idx) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        [blockItem1, blockItem2, blockItem3].forEach((item, idx) => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                setActiveBlock(idx);
+            });
+
+            item.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                setActiveBlock(idx);
+                handleStart(e);
+            });
+            item.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                setActiveBlock(idx);
+                handleStart(e);
+            });
+        }, { passive: true });
+
+        sliderBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); handleStart(e); });
+        sliderBtn.addEventListener('touchstart', (e) => { e.stopPropagation(); handleStart(e); });
+
+        function initCaptcha() {
+            isVerified = false;
+            sliderBar.className = 'slider-bar';
+            sliderText.innerText = '请拖动滑块完成验证';
+            sliderBtn.style.left = '0px';
+            sliderBtn.style.pointerEvents = 'auto';
+            track = [];
+
+            fetch('/api/captcha')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        captchaToken = data.token;
+                        blocksData = data.blockImages || [];
+
+                        const oldPieces = imgContainer.querySelectorAll('.bg-piece');
+                        oldPieces.forEach(p => p.remove());
+
+                        const cols = 3, rows = 3;
+                        const totalWidth = 320, totalHeight = 160;
+                        const pieceWidth = totalWidth / cols;
+                        const pieceHeight = totalHeight / rows;
+
+                        if (data.bgPieces && Array.isArray(data.bgPieces)) {
+                            data.bgPieces.forEach(piece => {
+                                const index = piece.index;
+                                const r = Math.floor(index / cols);
+                                const c = index % cols;
+
+                                const imgElem = document.createElement('img');
+                                imgElem.className = 'bg-piece';
+                                imgElem.src = piece.base64;
+                                imgElem.style.left = (c * pieceWidth) + 'px';
+                                imgElem.style.top = (r * pieceHeight) + 'px';
+                                imgElem.style.width = (c === cols - 1 ? (totalWidth - c * pieceWidth) : pieceWidth) + 'px';
+                                imgElem.style.height = (r === rows - 1 ? (totalHeight - r * pieceHeight) : pieceHeight) + 'px';
+
+                                imgContainer.insertBefore(imgElem, blockItem1);
+                            });
+                        }
+
+                        var blockKeys = Object.keys(blocksData);
+                        var blockKeysLen = blockKeys.length;
+
+                        if (blockKeysLen === 3) {
+                            const items = [blockItem1, blockItem2, blockItem3];
+                            const imgs = [blockImg1, blockImg2, blockImg3];
+                            for (var i = 0; i < blockKeysLen; i++) {
+                                const b = blocksData[blockKeys[i]];
+                                items[i].style.left = b.x + 'px';
+                                items[i].style.top = b.y + 'px';
+                                items[i].style.transform = 'translateX(0px)';
+                                imgs[i].src = b.base64;
+                                items[i].setAttribute('data-key', blockKeys[i]);
+                                items[i].style.pointerEvents = 'auto';
+                            }
+                        }
+
+                        setActiveBlock(0);
+                        sliderBtn.style.left = '0px';
+                    }
+                });
+        }
+
+        const handleStart = (e) => {
+            if (isVerified) return;
+            isMouseDown = true;
+            startX = e.clientX || (e.touches && e.touches[0].clientX);
+            startY = e.clientY || (e.touches && e.touches[0].clientY);
+            startTime = getPerformanceNow();
+            track = [];
+
+            document.addEventListener('mousemove', handleMove, { passive: true });
+            document.addEventListener('mouseup', handleEnd);
+            document.addEventListener('touchmove', handleMove, { passive: true });
+            document.addEventListener('touchend', handleEnd);
+        };
+
+        const handleMove = (e) => {
+            if (!isMouseDown) return;
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            if (!clientX) return;
+
+            let moveX = clientX - startX;
+            if (moveX < 0) moveX = 0;
+            if (moveX > 270) moveX = 270;
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+
+            animationFrameId = requestAnimationFrame(() => {
+                sliderBtn.style.left = moveX + 'px';
+                const activeItem = [blockItem1, blockItem2, blockItem3][activeBlockIndex];
+                if (activeItem) {
+                    activeItem.style.transform = `translateX(${moveX}px)`;
+                }
+            });
+            
+            var msNow = getPerformanceNow();
+            track.push({
+                x: moveX,
+                y: clientY - startY,
+                t: Math.round(msNow - startTime)
+            });
+        };
+
+        const handleEnd = () => {
+            if (!isMouseDown) return;
+            isMouseDown = false;
+
+            document.removeEventListener('mousemove', handleMove);
+            document.removeEventListener('mouseup', handleEnd);
+            document.removeEventListener('touchmove', handleMove);
+            document.removeEventListener('touchend', handleEnd);
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+
+            const currentSliderLeft = parseInt(sliderBtn.style.left) || 0;
+
+            if (currentSliderLeft < 2) {
+                sliderBtn.style.left = '0px';
+                [blockItem1, blockItem2, blockItem3].forEach(item => item.style.transform = 'translateX(0px)');
+                return;
+            }
+
+            // 安全获取当前激活滑块的 key，修复 e.target 丢失问题
+            const activeItem = [blockItem1, blockItem2, blockItem3][activeBlockIndex];
+            const selectKey = activeItem ? activeItem.getAttribute('data-key') : '';
+
+            fetch('/api/captcha/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    x: currentSliderLeft,
+                    token: captchaToken,
+                    track: track,
+                    select_idx: activeBlockIndex,
+                    select_key: selectKey
+                })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        isVerified = true;
+                        sliderBar.className = 'slider-bar success';
+                        sliderText.innerText = data.msg || "验证成功";
+                        sliderBtn.style.pointerEvents = 'none';
+                        [blockItem1, blockItem2, blockItem3].forEach(item => item.style.pointerEvents = 'none');
+                    } else {
+                        sliderBar.className = 'slider-bar fail';
+                        sliderText.innerText = data.msg;
+                        setTimeout(initCaptcha, 1000);
+                    }
+                });
+        };
+
+        refreshBtn.addEventListener('click', initCaptcha);
+
+        function getPerformanceNow() {
+            return performance.now() || window.performance.now();
+        }
+    </script>
+</body>
+
+</html>
