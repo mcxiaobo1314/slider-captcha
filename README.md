@@ -158,7 +158,7 @@ php -i | grep -i redis
 可以按照下面的结构集成：
 
 ``` text
-your-project/
+backend/
 ├── app/
 │   ├── Controller/
 │   │   └── CaptchaController.php
@@ -166,14 +166,11 @@ your-project/
 │   └── Library/
 │       ├── CaptchaTrackValidator.php
 │       └── VisitorIdentity.php
+│ 
+nginx/
+│  └──html/
+│      └── captcha.html
 │
-├── public/
-│   └── index.php
-│
-├── config/
-│   └── ...
-│
-├── composer.json
 └── README.md
 ```
 
